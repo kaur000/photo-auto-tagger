@@ -1,0 +1,17 @@
+{
+  "Records": [
+    {
+      "eventVersion": "2.1",
+      "eventSource": "aws:s3",
+      "eventName": "ObjectCreated:Put",
+      "s3": {
+        "bucket": {
+          "name": "REPLACE_WITH_YOUR_BUCKET_NAME"
+        },
+        "object": {
+          "key": "uploads/sample.jpg"
+        }
+      }
+    }
+  ]
+}

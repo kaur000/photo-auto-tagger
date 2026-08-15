@@ -1,0 +1,86 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Serverless Photo Auto-Tagger
+  Upload a photo to S3 -> Lambda triggers automatically -> Amazon Rekognition
+  detects what's in the image -> results are written back to S3 as JSON.
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 256
+    Runtime: nodejs20.x
+
+Resources:
+
+  # --- Storage -------------------------------------------------------------
+  # One bucket, two "folders" (prefixes): uploads/ for raw photos,
+  # results/ for the JSON output the Lambda writes back.
+  PhotoBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "photo-auto-tagger-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods: [GET]
+            AllowedOrigins: ["*"]
+
+  # --- Compute ---------------------------------------------------------------
+  PhotoTaggerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: photo-auto-tagger
+      CodeUri: src/
+      Handler: index.handler
+      Description: >
+        Triggered by S3 ObjectCreated events under uploads/. Calls Rekognition
+        DetectLabels on the new image and writes a JSON summary to results/.
+      Policies:
+        # Least-privilege IAM: only the two actions this function actually
+        # needs, scoped to this one bucket - not "s3:*" on "*".
+        #
+        # NOTE: the bucket ARN is built with !Sub from the same deterministic
+        # name used below, instead of !Ref/!GetAtt PhotoBucket. Referencing
+        # the bucket resource directly here would create a CloudFormation
+        # dependency cycle: Bucket (needs Function ARN for its S3 event
+        # notification) -> Function (needs Role) -> Role (would need Bucket).
+        # Using the literal ARN string breaks that cycle while granting the
+        # exact same permissions.
+        - Statement:
+            - Sid: PhotoBucketReadWrite
+              Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+              Resource:
+                - !Sub "arn:aws:s3:::photo-auto-tagger-${AWS::AccountId}-${AWS::Region}/*"
+            - Sid: RekognitionDetectLabels
+              Effect: Allow
+              Action:
+                - rekognition:DetectLabels
+              Resource: "*" # Rekognition doesn't support resource-level permissions for this action
+      Events:
+        PhotoUploaded:
+          Type: S3
+          Properties:
+            Bucket: !Ref PhotoBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: uploads/
+
+Outputs:
+  BucketName:
+    Description: Upload your test photos to uploads/ in this bucket
+    Value: !Ref PhotoBucket
+  FunctionName:
+    Value: !Ref PhotoTaggerFunction
+  FunctionArn:
+    Value: !GetAtt PhotoTaggerFunction.Arn

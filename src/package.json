@@ -1,0 +1,8 @@
+{
+  "name": "photo-auto-tagger",
+  "version": "1.0.0",
+  "description": "Lambda function that tags uploaded photos using Amazon Rekognition",
+  "type": "module",
+  "main": "index.mjs",
+  "dependencies": {}
+}
