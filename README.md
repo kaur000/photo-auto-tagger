@@ -2,16 +2,28 @@
 
 Upload a photo to S3 → it silently triggers a Lambda function → the function
 asks **Amazon Rekognition** what's in the photo → the answer gets written
-back to S3 as JSON. No servers, no polling, fully event-driven.
+back to S3 as JSON → a second Lambda re-renders a public gallery page so you
+can actually see the result in a browser. No servers, no polling, fully
+event-driven end to end.
+
+**Live demo:** http://photo-auto-tagger-gallery-081155411312-us-east-1.s3-website-us-east-1.amazonaws.com
 
 ```
                  ObjectCreated event
-   uploads/cat.jpg ──────────────────▶  Lambda  ──────▶ Rekognition
-        │                             (Node.js 20)       DetectLabels
+   uploads/cat.jpg ──────────────────▶  PhotoTaggerFunction ──▶ Rekognition
+        │                                  │                    DetectLabels
+        │                                  ▼
+        │                     results/cat.jpg.json
+        │                     (same private bucket)
+        │                                  │
+        │                    ObjectCreated event (results/*.json)
+        │                                  ▼
+        │                     GalleryBuilderFunction
         │                                  │
         │                                  ▼
-        └────────────────────▶  results/cat.jpg.json
-                (same S3 bucket)
+        │                     public GalleryBucket
+        │                     (index.html + manifest.json + photos/)
+        └───────────────────────────────────────────▶  view in a browser
 ```
 
 ## Why this project
@@ -33,12 +45,15 @@ concepts that actually matter more than the services themselves:
 
 ```
 photo-auto-tagger/
-├── template.yaml         # AWS SAM template — the entire infrastructure definition
+├── template.yaml           # AWS SAM template — the entire infrastructure definition
 ├── src/
-│   ├── index.mjs          # Lambda handler
+│   ├── index.mjs           # PhotoTaggerFunction — calls Rekognition, writes results/*.json
+│   └── package.json
+├── gallery-builder/
+│   ├── index.mjs            # GalleryBuilderFunction — rebuilds the public gallery page
 │   └── package.json
 └── tests/
-    └── s3-test-event.json # Sample S3 event for local testing
+    └── s3-test-event.json  # Sample S3 event for local testing
 ```
 
 ## Prerequisites
@@ -84,6 +99,9 @@ You should see something like:
 }
 ```
 
+Then open the `GalleryUrl` from the stack outputs in a browser — your photo
+should already be there with its tags underneath it.
+
 Watch it happen live:
 
 ```bash
@@ -117,7 +135,7 @@ sam delete
 - Store results in DynamoDB instead of JSON files, add a query API via API Gateway
 - Add a Dead Letter Queue (SQS) for images that fail Rekognition repeatedly
 - Add S3 lifecycle rules to expire old uploads automatically
-- Front it with a static S3-hosted gallery page that reads the JSON and renders tags
+- Put CloudFront in front of GalleryBucket for HTTPS and caching instead of the raw S3 website endpoint
 - Add unit tests with a mocked AWS SDK and wire up GitHub Actions for CI/CD
 
 ## Resume bullet (steal/edit this)
@@ -144,3 +162,14 @@ sam delete
 - **"Why SAM over clicking in the console?"** Reproducibility — the whole
   stack can be destroyed and recreated identically, reviewed in a PR, and
   versioned in git.
+- **"Why a second bucket for the gallery instead of just making the first
+  one public?"** Blast-radius separation. `PhotoBucket` (the working data)
+  stays fully private with `PublicAccessBlockConfiguration` locked down;
+  only `GalleryBucket`, which holds copies intended to be public, has its
+  block-public-access settings relaxed and a scoped `s3:GetObject` bucket
+  policy. A bug in one doesn't expose the other.
+- **"How does the gallery stay in sync?"** It's chained off the first
+  Lambda's own output — `GalleryBuilderFunction` is triggered by
+  `ObjectCreated` events on the `results/*.json` prefix, so it fires
+  automatically every time a new photo finishes tagging. No polling, no
+  manual rebuild step.

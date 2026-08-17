@@ -1,0 +1,8 @@
+{
+  "name": "gallery-builder",
+  "version": "1.0.0",
+  "description": "Rebuilds the public photo gallery page whenever a new tagging result is written",
+  "type": "module",
+  "main": "index.mjs",
+  "dependencies": {}
+}
