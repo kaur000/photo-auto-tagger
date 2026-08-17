@@ -131,6 +131,14 @@ sam delete
 
 ## Ideas to extend (good for "what would you improve?")
 
+- **Let people upload straight from the gallery page** instead of via the S3
+  console/CLI. Deliberately *not* built yet — the correct way to do it is a
+  small Lambda behind a Function URL that hands the browser a short-lived,
+  pre-signed S3 upload URL (no standing write access ever exists, URLs
+  expire in minutes). The wrong way — a public, unauthenticated
+  `PutObject` straight on the bucket — would let anyone on the internet
+  write to it indefinitely, so it's worth naming as the anti-pattern if this
+  comes up in an interview, not just the feature itself.
 - Generate an actual thumbnail with a Lambda layer (e.g. Sharp) alongside the labels
 - Store results in DynamoDB instead of JSON files, add a query API via API Gateway
 - Add a Dead Letter Queue (SQS) for images that fail Rekognition repeatedly
