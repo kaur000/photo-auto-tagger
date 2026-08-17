@@ -21,20 +21,16 @@ const BUCKET = process.env.PHOTO_BUCKET;
 const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 const URL_EXPIRY_SECONDS = 300; // 5 minutes - long enough to use, short enough to not matter if logged
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "content-type",
-};
+// NOTE: no manual CORS headers here. The Function URL's own Cors config
+// (see FunctionUrlConfig in template.yaml) already handles CORS for both
+// the preflight OPTIONS request and the real response - AWS injects the
+// Access-Control-Allow-* headers itself. Adding them again here produced
+// duplicate headers (two Access-Control-Allow-Origin values on one
+// response), which browsers reject outright as "Failed to fetch." Lambda
+// Function URLs with Cors configured don't even invoke this handler for
+// OPTIONS requests, so no explicit OPTIONS branch is needed either.
 
 export const handler = async (event) => {
-  const method = event.requestContext?.http?.method;
-
-  // Browsers send a CORS preflight OPTIONS request before the real POST.
-  if (method === "OPTIONS") {
-    return { statusCode: 204, headers: CORS_HEADERS, body: "" };
-  }
-
   try {
     const body = JSON.parse(event.body || "{}");
     const contentType = body.contentType;
@@ -70,7 +66,7 @@ export const handler = async (event) => {
 function respond(statusCode, obj) {
   return {
     statusCode,
-    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(obj),
   };
 }
