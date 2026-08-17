@@ -23,6 +23,7 @@ import {
 
 const s3 = new S3Client({});
 const GALLERY_BUCKET = process.env.GALLERY_BUCKET;
+const PRESIGN_URL = process.env.PRESIGN_URL || "";
 const MANIFEST_KEY = "manifest.json";
 
 export const handler = async (event) => {
@@ -121,6 +122,10 @@ async function putIndexHtml(manifest) {
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; padding: 2rem; background: #0b0b0f; color: #eee; }
   h1 { font-weight: 600; margin-bottom: 0.25rem; }
   p.sub { color: #999; margin-top: 0; }
+  .uploader { margin-top: 1.5rem; display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap; }
+  .upload-btn { display: inline-flex; align-items: center; gap: 0.5rem; cursor: pointer; background: #e8a33d; color: #16161d; font-weight: 600; padding: 0.6rem 1.1rem; border-radius: 8px; font-size: 0.9rem; user-select: none; }
+  .upload-btn:hover { background: #f0b158; }
+  #upload-status { font-size: 0.85rem; color: #999; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1.25rem; margin-top: 2rem; }
   figure { margin: 0; background: #16161d; border-radius: 12px; overflow: hidden; border: 1px solid #26262f; }
   figure img { width: 100%; height: 180px; object-fit: cover; display: block; background: #222; }
@@ -132,9 +137,59 @@ async function putIndexHtml(manifest) {
 <body>
   <h1>Photo Auto-Tagger Gallery</h1>
   <p class="sub">Every photo below was tagged automatically by AWS Lambda + Amazon Rekognition the moment it was uploaded to S3.</p>
+
+  <div class="uploader">
+    <label class="upload-btn" for="file-input">📷 Add a photo</label>
+    <input id="file-input" type="file" accept="image/*" capture="environment" style="display:none" />
+    <span id="upload-status"></span>
+  </div>
+
   <div class="grid">${cards}</div>
-  ${manifest.length === 0 ? '<p class="empty">No photos yet - upload one to uploads/ in the S3 bucket.</p>' : ""}
-  <footer>S3 → Lambda → Rekognition → S3, fully event-driven.</footer>
+  ${manifest.length === 0 ? '<p class="empty">No photos yet - upload one above.</p>' : ""}
+  <footer>S3 → Lambda → Rekognition → S3, fully event-driven. Uploads go through a short-lived pre-signed URL - no standing public write access to the bucket.</footer>
+
+  <script>
+    const PRESIGN_URL = ${JSON.stringify(PRESIGN_URL)};
+    const input = document.getElementById("file-input");
+    const status = document.getElementById("upload-status");
+
+    input.addEventListener("change", async () => {
+      const file = input.files[0];
+      if (!file) return;
+
+      if (!PRESIGN_URL) {
+        status.textContent = "Upload endpoint not configured.";
+        return;
+      }
+
+      status.textContent = "Requesting upload URL...";
+      try {
+        const presignRes = await fetch(PRESIGN_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename: file.name, contentType: file.type }),
+        });
+        if (!presignRes.ok) {
+          const err = await presignRes.json().catch(() => ({}));
+          throw new Error(err.error || "Could not get an upload URL.");
+        }
+        const { uploadUrl } = await presignRes.json();
+
+        status.textContent = "Uploading...";
+        const putRes = await fetch(uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": file.type },
+          body: file,
+        });
+        if (!putRes.ok) throw new Error("Upload to S3 failed.");
+
+        status.textContent = "Uploaded! Tagging in progress - refresh in a few seconds.";
+        input.value = "";
+      } catch (err) {
+        status.textContent = "Error: " + err.message;
+      }
+    });
+  </script>
 </body>
 </html>`;
 

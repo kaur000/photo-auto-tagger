@@ -1,29 +1,42 @@
 # Serverless Photo Auto-Tagger
 
-Upload a photo to S3 → it silently triggers a Lambda function → the function
-asks **Amazon Rekognition** what's in the photo → the answer gets written
-back to S3 as JSON → a second Lambda re-renders a public gallery page so you
-can actually see the result in a browser. No servers, no polling, fully
-event-driven end to end.
+Click "Add a photo" on the gallery page (or take one with your phone camera)
+→ it uploads straight to S3 via a short-lived pre-signed URL → that upload
+silently triggers a Lambda function → the function asks **Amazon
+Rekognition** what's in the photo → the answer gets written back to S3 as
+JSON → a second Lambda re-renders the public gallery page with the new
+photo and its tags. No servers, no polling, fully event-driven end to end,
+and no standing public write access to anything at any point.
 
 **Live demo:** http://photo-auto-tagger-gallery-081155411312-us-east-1.s3-website-us-east-1.amazonaws.com
 
 ```
-                 ObjectCreated event
-   uploads/cat.jpg ──────────────────▶  PhotoTaggerFunction ──▶ Rekognition
-        │                                  │                    DetectLabels
-        │                                  ▼
-        │                     results/cat.jpg.json
-        │                     (same private bucket)
-        │                                  │
-        │                    ObjectCreated event (results/*.json)
-        │                                  ▼
-        │                     GalleryBuilderFunction
-        │                                  │
-        │                                  ▼
-        │                     public GalleryBucket
-        │                     (index.html + manifest.json + photos/)
-        └───────────────────────────────────────────▶  view in a browser
+  Browser                                                     PhotoBucket (private)
+  "Add a photo"                                                       │
+      │  1. POST {filename, contentType}                              │
+      ▼                                                               │
+  PresignUploadFunction ──────────────────────────────────────────────┤
+      │  2. returns a 5-minute pre-signed PUT URL                     │
+      ▼                                                               │
+  Browser  ── 3. PUT file bytes directly to S3 ─────────────────────▶ uploads/cat.jpg
+                                                                       │
+                                                    ObjectCreated event│
+                                                                       ▼
+                                                       PhotoTaggerFunction ──▶ Rekognition
+                                                                       │        DetectLabels
+                                                                       ▼
+                                                        results/cat.jpg.json
+                                                                       │
+                                                    ObjectCreated event│ (results/*.json)
+                                                                       ▼
+                                                        GalleryBuilderFunction
+                                                                       │
+                                                                       ▼
+                                                        public GalleryBucket
+                                                        (index.html + manifest.json + photos/)
+                                                                       │
+                                                                       ▼
+                                                        Browser sees it, refresh
 ```
 
 ## Why this project
@@ -50,7 +63,10 @@ photo-auto-tagger/
 │   ├── index.mjs           # PhotoTaggerFunction — calls Rekognition, writes results/*.json
 │   └── package.json
 ├── gallery-builder/
-│   ├── index.mjs            # GalleryBuilderFunction — rebuilds the public gallery page
+│   ├── index.mjs           # GalleryBuilderFunction — rebuilds the public gallery page
+│   └── package.json
+├── presign-upload/
+│   ├── index.mjs           # PresignUploadFunction — hands the browser a pre-signed upload URL
 │   └── package.json
 └── tests/
     └── s3-test-event.json  # Sample S3 event for local testing
@@ -129,16 +145,29 @@ aws s3 rm s3://<BucketName> --recursive   # empty the bucket first, CFN won't de
 sam delete
 ```
 
+## Uploading from the browser
+
+The gallery page has an "Add a photo" button (uses `capture="environment"`
+so it opens the camera directly on mobile). This does **not** give the
+browser standing write access to the bucket — instead:
+
+1. Browser `POST`s `{ filename, contentType }` to `PresignUploadFunction`'s
+   public Function URL
+2. That Lambda validates the content type, builds a safe key under
+   `uploads/`, and returns a **pre-signed S3 PUT URL** valid for 5 minutes
+   and scoped to that one key only
+3. Browser `PUT`s the file bytes directly to S3 using that URL — the
+   Lambda never sees or touches the file itself
+4. The rest of the pipeline (tagging, gallery rebuild) fires exactly as it
+   would for any other upload
+
+The anti-pattern this avoids: making the bucket itself accept
+unauthenticated `PutObject` from anyone, which would let strangers write
+to it indefinitely. Pre-signed URLs expire in minutes and are scoped to
+one key — no standing public write access ever exists.
+
 ## Ideas to extend (good for "what would you improve?")
 
-- **Let people upload straight from the gallery page** instead of via the S3
-  console/CLI. Deliberately *not* built yet — the correct way to do it is a
-  small Lambda behind a Function URL that hands the browser a short-lived,
-  pre-signed S3 upload URL (no standing write access ever exists, URLs
-  expire in minutes). The wrong way — a public, unauthenticated
-  `PutObject` straight on the bucket — would let anyone on the internet
-  write to it indefinitely, so it's worth naming as the anti-pattern if this
-  comes up in an interview, not just the feature itself.
 - Generate an actual thumbnail with a Lambda layer (e.g. Sharp) alongside the labels
 - Store results in DynamoDB instead of JSON files, add a query API via API Gateway
 - Add a Dead Letter Queue (SQS) for images that fail Rekognition repeatedly

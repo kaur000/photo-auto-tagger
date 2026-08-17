@@ -27,8 +27,15 @@ Resources:
         RestrictPublicBuckets: true
       CorsConfiguration:
         CorsRules:
-          - AllowedMethods: [GET]
+          # PUT is needed so the browser can upload directly to a
+          # pre-signed URL (see PresignUploadFunction below). This does NOT
+          # make the bucket public - PublicAccessBlockConfiguration above
+          # still blocks anonymous access; a pre-signed URL is a signed
+          # request on behalf of PresignUploadFunction's own IAM role, which
+          # S3 treats differently from public access.
+          - AllowedMethods: [GET, PUT]
             AllowedOrigins: ["*"]
+            AllowedHeaders: ["*"]
 
   # --- Compute ---------------------------------------------------------------
   PhotoTaggerFunction:
@@ -76,6 +83,39 @@ Resources:
                   - Name: prefix
                     Value: uploads/
 
+  # Called directly by the browser (public Function URL) to get a
+  # short-lived, single-key pre-signed S3 upload URL. This Lambda never
+  # touches file bytes itself - it only hands back a signed link, and the
+  # browser uploads straight to S3 with it. No standing public write
+  # access to PhotoBucket ever exists; this is the safe alternative to
+  # making the bucket accept unauthenticated uploads.
+  PresignUploadFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: photo-auto-tagger-presign-upload
+      CodeUri: presign-upload/
+      Handler: index.handler
+      Description: >
+        Public Function URL. Returns a pre-signed S3 PUT URL, scoped to one
+        key under uploads/, valid for 5 minutes.
+      Environment:
+        Variables:
+          PHOTO_BUCKET: !Sub "photo-auto-tagger-${AWS::AccountId}-${AWS::Region}"
+      Policies:
+        - Statement:
+            - Sid: PresignPutObject
+              Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource:
+                - !Sub "arn:aws:s3:::photo-auto-tagger-${AWS::AccountId}-${AWS::Region}/uploads/*"
+      FunctionUrlConfig:
+        AuthType: NONE
+        Cors:
+          AllowOrigins: ["*"]
+          AllowMethods: ["POST"]
+          AllowHeaders: ["content-type"]
+
   # --- Public gallery -------------------------------------------------------
   # A second bucket, deliberately separate from PhotoBucket, so the private
   # working bucket never has to be made public. This one hosts a static
@@ -118,6 +158,7 @@ Resources:
       Environment:
         Variables:
           GALLERY_BUCKET: !Sub "photo-auto-tagger-gallery-${AWS::AccountId}-${AWS::Region}"
+          PRESIGN_URL: !GetAtt PresignUploadFunctionUrl.FunctionUrl
       Policies:
         # Read-only on PhotoBucket via literal ARN (see note above - same
         # circular dependency reason applies here).
@@ -158,3 +199,6 @@ Outputs:
   GalleryUrl:
     Description: Public gallery website - open this in a browser
     Value: !Sub "http://${GalleryBucket}.s3-website-${AWS::Region}.amazonaws.com"
+  PresignUploadEndpoint:
+    Description: Function URL used by the gallery page's upload button
+    Value: !GetAtt PresignUploadFunctionUrl.FunctionUrl

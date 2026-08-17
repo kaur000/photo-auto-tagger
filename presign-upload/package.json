@@ -1,0 +1,10 @@
+{
+  "name": "presign-upload",
+  "version": "1.0.0",
+  "description": "Hands the browser a short-lived pre-signed S3 upload URL",
+  "type": "module",
+  "main": "index.mjs",
+  "dependencies": {
+    "@aws-sdk/s3-request-presigner": "^3.600.0"
+  }
+}
